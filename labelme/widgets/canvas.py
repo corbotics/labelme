@@ -1,15 +1,19 @@
+import os
+from collections import defaultdict
+
+import cv2
+import numpy as np
+import torch
+from PIL import Image
+from matplotlib import pyplot as plt
 from qtpy import QtCore
 from qtpy import QtGui
 from qtpy import QtWidgets
 
+import labelme.utils
 from labelme import QT5
 from labelme.shape import Shape, MultipoinstShape, MaskShape
-import labelme.utils
-import numpy as np
-import time
-import cv2
-import appdirs
-import os
+from sam2.sam2_video_predictor import SAM2VideoPredictor
 
 # TODO(unknown):
 # - [maybe] Find optimal epsilon value.
@@ -21,11 +25,51 @@ CURSOR_DRAW = QtCore.Qt.CrossCursor
 CURSOR_MOVE = QtCore.Qt.ClosedHandCursor
 CURSOR_GRAB = QtCore.Qt.OpenHandCursor
 
-MOVE_SPEED = 5.0
+# use bfloat16 for the entire notebook
+torch.autocast(device_type="cuda", dtype=torch.bfloat16).__enter__()
+if torch.cuda.get_device_properties(0).major >= 8:
+    # turn on tfloat32 for Ampere GPUs (https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices)
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
 
+MOVE_SPEED = 5.0
+from sam2.build_sam import build_sam2, build_sam2_video_predictor
+from sam2.sam2_image_predictor import SAM2ImagePredictor
+
+# sam2_checkpoint = "../checkpoints/sam2_hiera_large.pt"
+sam2_checkpoint = "/code_projects/segment-anything-2/checkpoints/sam2_hiera_large.pt"
+model_cfg = "sam2_hiera_l.yaml"
+use_video = True
+sam2_model = build_sam2(model_cfg, sam2_checkpoint, device="cuda")
+
+
+# image
+# predictor = SAM2ImagePredictor(sam2_model)
+# video
+def show_mask(mask, ax, obj_id=None, random_color=False):
+    if random_color:
+        color = np.concatenate([np.random.random(3), np.array([0.6])], axis=0)
+    else:
+        cmap = plt.get_cmap("tab10")
+        cmap_idx = 0 if obj_id is None else obj_id
+        color = np.array([*cmap(cmap_idx)[:3], 0.6])
+    h, w = mask.shape[-2:]
+    mask_image = mask.reshape(h, w, 1) * color.reshape(1, 1, -1)
+    ax.imshow(mask_image)
+
+
+def show_points(coords, labels, ax, marker_size=200):
+    pos_points = coords[labels == 1]
+    neg_points = coords[labels == 0]
+    ax.scatter(pos_points[:, 0], pos_points[:, 1], color='green', marker='*', s=marker_size, edgecolor='white',
+               linewidth=1.25)
+    ax.scatter(neg_points[:, 0], neg_points[:, 1], color='red', marker='*', s=marker_size, edgecolor='white',
+               linewidth=1.25)
+
+
+# def sam2():
 
 class Canvas(QtWidgets.QWidget):
-
     zoomRequest = QtCore.Signal(int, QtCore.QPoint)
     scrollRequest = QtCore.Signal(int, int)
     newShape = QtCore.Signal()
@@ -69,6 +113,7 @@ class Canvas(QtWidgets.QWidget):
                 "maxside": 2048,
                 "approxpoly_epsilon": 0.5,
                 "weights": "vit-h",
+                # "weights": "vit_l",
                 "device": "cuda"
             }
         )
@@ -112,8 +157,11 @@ class Canvas(QtWidgets.QWidget):
         # Set widget options.
         self.setMouseTracking(True)
         self.setFocusPolicy(QtCore.Qt.WheelFocus)
-        self.sam_predictor = None
+        self.sam_predictor: SAM2VideoPredictor | SAM2ImagePredictor = None
         self.sam_mask = MaskShape()
+        self.sam_video_frame_idx = None
+        self.points = defaultdict(list)
+        self.sam_propagated_video = False
 
     def fillDrawing(self):
         return self._fill_drawing
@@ -141,56 +189,164 @@ class Canvas(QtWidgets.QWidget):
         self.sam_mask = MaskShape()
         self.current = None
 
-    def loadSamPredictor(self,):
+    def loadSamPredictor(self, ):
         if not self.sam_predictor:
-            import torch
-            from segment_anything import sam_model_registry, SamPredictor
-            cachedir = appdirs.user_cache_dir("labelme")
-            os.makedirs(cachedir, exist_ok=True)
-            weight_file = os.path.join(cachedir, self.sam_config["weights"] + ".pth")
-            weight_urls = {
-                "vit_h": "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth",
-                "vit_l": "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_l_0b3195.pth",
-                "vit_b": "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth"
-            }
-            if not os.path.isfile(weight_file):
-                torch.hub.download_url_to_file(weight_urls[self.sam_config["weights"]], weight_file)
-            sam = sam_model_registry[self.sam_config["weights"]](checkpoint=weight_file)
-            if self.sam_config["device"] == "cuda" and torch.cuda.is_available():
-                sam.to(device="cuda")
-            self.sam_predictor = SamPredictor(sam)
+            if not use_video:
+                predictor = SAM2ImagePredictor(sam2_model)
+                self.sam_predictor = predictor
+
+                # old sam
+                # import torch
+                # from segment_anything import sam_model_registry, SamPredictor
+                # cachedir = appdirs.user_cache_dir("labelme")
+                # os.makedirs(cachedir, exist_ok=True)
+                # weight_file = os.path.join(cachedir, self.sam_config["weights"] + ".pth")
+                # weight_urls = {
+                #     "vit_h": "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth",
+                #     "vit_l": "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_l_0b3195.pth",
+                #     "vit_b": "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth"
+                # }
+                # if not os.path.isfile(weight_file):
+                #     torch.hub.download_url_to_file(weight_urls[self.sam_config["weights"]], weight_file)
+                # sam = sam_model_registry[self.sam_config["weights"]](checkpoint=weight_file)
+                # if self.sam_config["device"] == "cuda" and torch.cuda.is_available():
+                #     sam.to(device="cuda")
+                # self.sam_predictor = SamPredictor(sam)
+            else:
+                predictor = build_sam2_video_predictor(model_cfg, sam2_checkpoint)
+
+                self.sam_predictor = predictor
         self.samEmbedding()
 
-    def samEmbedding(self,):
+    def reset_video_state(self):
+        self.sam_video_frame_idx = None
+        self.sam_propagated_video = False
+        self.video_masks = None
+
+    def samEmbedding(self):
+        print('samembedding')
+
         image = self.pixmap.toImage().copy()
         img_size = image.size()
-        s = image.bits().asstring(img_size.height() * img_size.width() * image.depth()//8)
-        image = np.frombuffer(s, dtype=np.uint8).reshape([img_size.height(), img_size.width(),image.depth()//8])
-        image = image[:,:,:3].copy()
+        s = image.bits().asstring(img_size.height() * img_size.width() * image.depth() // 8)
+        image = np.frombuffer(s, dtype=np.uint8).reshape([img_size.height(), img_size.width(), image.depth() // 8])
+        image = image[:, :, :3].copy()
         h, w, _ = image.shape
         self.sam_image_scale = self.sam_config["maxside"] / max(h, w)
         self.sam_image_scale = min(1, self.sam_image_scale)
-        image = cv2.resize(image, None, fx=self.sam_image_scale, fy=self.sam_image_scale, interpolation=cv2.INTER_LINEAR)
-        self.sam_predictor.set_image(image)
-        self.update()
+        image = cv2.resize(image, None, fx=self.sam_image_scale, fy=self.sam_image_scale,
+                           interpolation=cv2.INTER_LINEAR)
+        if not use_video:
+            self.sam_predictor.set_image(image)
+        else:
+            if self.sam_video_frame_idx is None:
+                self.video_num_frames = 15
 
-    def samPrompt(self, points, labels):
-        masks, scores, logits = self.sam_predictor.predict(
-            point_coords=points*self.sam_image_scale,
-            point_labels=labels,
-            mask_input=self.sam_mask.logits[None,:,:] if self.sam_mask.logits is not None else None,
-            multimask_output=False
-        )
-        self.sam_mask.logits = logits[np.argmax(scores), :, :]
-        mask = masks[np.argmax(scores), :, :]
-        self.sam_mask.setScaleMask(self.sam_image_scale, mask)
+                self.jpg_dir = os.path.join(self.img_dir, "jpg")
+                os.makedirs(self.jpg_dir, exist_ok=True)
+
+                start_i = None
+                img_folder_files = sorted(os.listdir(self.img_dir))
+                for i, filename in enumerate(img_folder_files):
+                    if not self.current_image_path.endswith(filename):
+                        continue
+                    start_i = i
+                    break
+
+                self.sam_video_frame_idx = 0
+                images_found = 0
+                i = 0
+                while images_found < self.video_num_frames:
+                    filename = img_folder_files[start_i + i]
+                    i += 1
+                    if filename.endswith(".png") or filename.endswith(".jpg"):
+                        # Open the PNG image
+                        png_image = Image.open(os.path.join(self.img_dir, filename))
+
+                        # Convert the image to RGB mode
+                        rgb_image = png_image.convert("L")
+
+                        # Define the new filename with .jpg extension
+                        # new_filename = os.path.splitext(filename)[0].replace('frame_', '') + ".jpg"
+                        new_filename = f"{i:05d}.jpg"
+                        # Save the image in JPG format
+                        rgb_image.save(os.path.join(self.jpg_dir, new_filename), "JPEG") # save
+                        images_found += 1
+                print("Conversion complete.")
+
+                self.video_inference_state = self.sam_predictor.init_state(video_path=self.jpg_dir)
+                self.sam_predictor.reset_state(self.video_inference_state)
+            elif self.sam_propagated_video:
+                print('self.video_masks', len(self.video_masks))
+                print('self.sam_video_frame_idx', self.sam_video_frame_idx)
+                mask = self.video_masks[self.sam_video_frame_idx]
+                self.sam_mask.setScaleMask(self.sam_image_scale, mask.squeeze(0))
+        self.update()
+        # self.update()
+
+    def samPrompt(self, points, labels, click=True):
+        if not use_video:
+            masks, scores, logits = self.sam_predictor.predict(
+                point_coords=points * self.sam_image_scale,
+                point_labels=labels,
+                mask_input=self.sam_mask.logits[None, :, :] if self.sam_mask.logits is not None else None,
+                multimask_output=False
+            )
+            self.sam_mask.logits = logits[np.argmax(scores), :, :]
+            mask = masks[np.argmax(scores), :, :]
+            print('image mask', mask.shape)
+            self.sam_mask.setScaleMask(self.sam_image_scale, mask)
+        else:
+            if not self.sam_propagated_video or click:
+                with np.printoptions(precision=2, suppress=True):
+                    print('points', points)
+                    # print('  self.points[self.sam_video_frame_idx] ',   self.points[self.sam_video_frame_idx] )
+                    print('self.sam_video_frame_idx', self.sam_video_frame_idx)
+                frame_idx, out_obj_ids, out_mask_logits = self.sam_predictor.add_new_points(
+                    inference_state=self.video_inference_state,
+                    frame_idx=self.sam_video_frame_idx,  # ann_frame_idx
+                    obj_id=1,  # todo not sure what to do with this. I guess its the object that we want to follow
+                    points=points,
+                    labels=labels,
+                    # clear_old_points=False,
+                )
+
+                masks = (out_mask_logits[0] > 0.0).cpu().numpy()
+                # print('video mask', mask.shape)
+                print('len self.video_masks', len(masks))
+                # mask = masks[np.argmax(scores), :, :]
+                self.sam_mask.setScaleMask(self.sam_image_scale, masks[0])
+
+    def sam_propagate_video(self):
+        video_segments = {}  # video_segments contains the per-frame segmentation results
+        for out_frame_idx, out_obj_ids, out_mask_logits in self.sam_predictor.propagate_in_video(
+                self.video_inference_state, max_frame_num_to_track=self.video_num_frames):
+            video_segments[out_frame_idx] = {
+                out_obj_id: (out_mask_logits[i] > 0.0).cpu().numpy()
+                for i, out_obj_id in enumerate(out_obj_ids)
+            }
+        vis_frame_stride = 1
+        plt.close("all")
+        out_obj_id = 1
+        self.video_masks = [video_segments[i][out_obj_id] for i in range(self.video_num_frames)]
+        mask = self.video_masks[self.sam_video_frame_idx]
+        self.sam_mask.setScaleMask(self.sam_image_scale, mask.squeeze(0))
+        self.sam_propagated_video = True
+        self.samEmbedding()
+        # for out_frame_idx in range(0, nun_frames, vis_frame_stride):
+        #     plt.figure(figsize=(6, 4))
+        #     plt.title(f"frame {out_frame_idx}")
+        #     plt.imshow(Image.open(os.path.join(self.jpg_dir, self.frame_names[out_frame_idx])))
+        #     for out_obj_id, out_mask in video_segments[out_frame_idx].items():
+        #         show_mask(out_mask, plt.gca(), obj_id=out_obj_id)
+        # plt.show()
 
     def storeShapes(self):
         shapesBackup = []
         for shape in self.shapes:
             shapesBackup.append(shape.copy())
         if len(self.shapesBackups) > self.num_backups:
-            self.shapesBackups = self.shapesBackups[-self.num_backups - 1 :]
+            self.shapesBackups = self.shapesBackups[-self.num_backups - 1:]
         self.shapesBackups.append(shapesBackup)
 
     @property
@@ -283,7 +439,7 @@ class Canvas(QtWidgets.QWidget):
                 if self.createMode == "polygonSAM":
                     points = np.array([[pos.x(), pos.y()]])
                     labels = np.array([1])
-                    self.samPrompt(points, labels)
+                    self.samPrompt(points, labels, click=False)
                 self.repaint()  # draw crosshair
                 return
 
@@ -292,10 +448,10 @@ class Canvas(QtWidgets.QWidget):
                 # Project the point to the pixmap's edges.
                 pos = self.intersectionPoint(self.current[-1], pos)
             elif (
-                self.snapping
-                and len(self.current) > 1
-                and self.createMode == "polygon"
-                and self.closeEnough(pos, self.current[0])
+                    self.snapping
+                    and len(self.current) > 1
+                    and self.createMode == "polygon"
+                    and self.closeEnough(pos, self.current[0])
             ):
                 # Attract line to starting point and
                 # colorise to alert the user.
@@ -454,7 +610,7 @@ class Canvas(QtWidgets.QWidget):
                         self.current.addPoint(self.line[1], True)
                         points = [[point.x(), point.y()] for point in self.current.points]
                         labels = [int(label) for label in self.current.labels]
-                        self.samPrompt(np.array(points), np.array(labels))
+                        self.samPrompt(np.array(points), np.array(labels), click=True)
                         if int(ev.modifiers()) == QtCore.Qt.ControlModifier:
                             self.finalise()
                 elif not self.outOfPixmap(pos):
@@ -478,8 +634,8 @@ class Canvas(QtWidgets.QWidget):
                 if self.selectedEdge():
                     self.addPointToEdge()
                 elif (
-                    self.selectedVertex()
-                    and int(ev.modifiers()) == QtCore.Qt.ShiftModifier
+                        self.selectedVertex()
+                        and int(ev.modifiers()) == QtCore.Qt.ShiftModifier
                 ):
                     # Delete point if: left-click + SHIFT on a point
                     self.removeSelectedPoint()
@@ -494,7 +650,7 @@ class Canvas(QtWidgets.QWidget):
                     self.current.addPoint(self.line[1], False)
                     points = [[point.x(), point.y()] for point in self.current.points]
                     labels = [int(label) for label in self.current.labels]
-                    self.samPrompt(np.array(points), np.array(labels))
+                    self.samPrompt(np.array(points), np.array(labels), click=True)
                     if int(ev.modifiers()) == QtCore.Qt.ControlModifier:
                         self.finalise()
                 elif not self.outOfPixmap(pos):
@@ -507,8 +663,8 @@ class Canvas(QtWidgets.QWidget):
             elif self.editing():
                 group_mode = int(ev.modifiers()) == QtCore.Qt.ControlModifier
                 if not self.selectedShapes or (
-                    self.hShape is not None
-                    and self.hShape not in self.selectedShapes
+                        self.hShape is not None
+                        and self.hShape not in self.selectedShapes
                 ):
                     self.selectShapePoint(pos, multiple_selection_mode=group_mode)
                     self.repaint()
@@ -520,8 +676,8 @@ class Canvas(QtWidgets.QWidget):
                 menu = self.menus[len(self.selectedShapesCopy) > 0]
                 self.restoreCursor()
                 if (
-                    not menu.exec_(self.mapToGlobal(ev.pos()))
-                    and self.selectedShapesCopy
+                        not menu.exec_(self.mapToGlobal(ev.pos()))
+                        and self.selectedShapesCopy
                 ):
                     # Cancel the move by deleting the shadow copy.
                     self.selectedShapesCopy = []
@@ -529,9 +685,9 @@ class Canvas(QtWidgets.QWidget):
         elif ev.button() == QtCore.Qt.LeftButton:
             if self.editing():
                 if (
-                    self.hShape is not None
-                    and self.hShapeIsSelected
-                    and not self.movingShape
+                        self.hShape is not None
+                        and self.hShapeIsSelected
+                        and not self.movingShape
                 ):
                     self.selectionChanged.emit(
                         [x for x in self.selectedShapes if x != self.hShape]
@@ -540,8 +696,8 @@ class Canvas(QtWidgets.QWidget):
         if self.movingShape and self.hShape:
             index = self.shapes.index(self.hShape)
             if (
-                self.shapesBackups[-1][index].points
-                != self.shapes[index].points
+                    self.shapesBackups[-1][index].points
+                    != self.shapes[index].points
             ):
                 self.storeShapes()
                 self.shapeMoved.emit()
@@ -584,9 +740,9 @@ class Canvas(QtWidgets.QWidget):
         # We need at least 4 points here, since the mousePress handler
         # adds an extra one before this handler is called.
         if (
-            self.double_click == "close"
-            and self.canCloseShape()
-            and len(self.current) > 3
+                self.double_click == "close"
+                and self.canCloseShape()
+                and len(self.current) > 3
         ):
             self.current.popPoint()
             self.finalise()
@@ -734,10 +890,10 @@ class Canvas(QtWidgets.QWidget):
 
         # draw crosshair
         if (
-            self._crosshair[self._createMode]
-            and self.drawing()
-            and self.prevMovePoint
-            and not self.outOfPixmap(self.prevMovePoint)
+                self._crosshair[self._createMode]
+                and self.drawing()
+                and self.prevMovePoint
+                and not self.outOfPixmap(self.prevMovePoint)
         ):
             p.setPen(QtGui.QColor(0, 0, 0))
             p.drawLine(
@@ -757,7 +913,7 @@ class Canvas(QtWidgets.QWidget):
         MultipoinstShape.scale = self.scale
         for shape in self.shapes:
             if (shape.selected or not self._hideBackround) and self.isVisible(
-                shape
+                    shape
             ):
                 shape.fill = shape.selected or shape == self.hShape
                 shape.paint(p)
@@ -770,10 +926,10 @@ class Canvas(QtWidgets.QWidget):
                 s.paint(p)
 
         if (
-            self.fillDrawing()
-            and self.createMode == "polygon"
-            and self.current is not None
-            and len(self.current.points) >= 2
+                self.fillDrawing()
+                and self.createMode == "polygon"
+                and self.current is not None
+                and len(self.current.points) >= 2
         ):
             drawing_shape = self.current.copy()
             drawing_shape.addPoint(self.line[1])
@@ -952,8 +1108,8 @@ class Canvas(QtWidgets.QWidget):
             if self.movingShape and self.selectedShapes:
                 index = self.shapes.index(self.selectedShapes[0])
                 if (
-                    self.shapesBackups[-1][index].points
-                    != self.shapes[index].points
+                        self.shapesBackups[-1][index].points
+                        != self.shapes[index].points
                 ):
                     self.storeShapes()
                     self.shapeMoved.emit()
@@ -1000,7 +1156,9 @@ class Canvas(QtWidgets.QWidget):
             self.drawingPolygon.emit(False)
         self.update()
 
-    def loadPixmap(self, pixmap, clear_shapes=True):
+    def loadPixmap(self, pixmap, clear_shapes=True, dir=None, file_name=None):
+        self.img_dir = dir
+        self.current_image_path = file_name
         self.pixmap = pixmap
         if clear_shapes:
             self.shapes = []
@@ -1010,7 +1168,6 @@ class Canvas(QtWidgets.QWidget):
         if self.createMode == "polygonSAM" and self.pixmap and self.sam_predictor:
             self.samEmbedding()
         self.update()
-
 
     def loadShapes(self, shapes, replace=True):
         if replace:

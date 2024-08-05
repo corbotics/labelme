@@ -240,7 +240,7 @@ class Canvas(QtWidgets.QWidget):
             self.sam_predictor.set_image(image)
         else:
             if self.sam_video_frame_idx is None:
-                self.video_num_frames = 15
+                self.video_num_frames = 50
 
                 self.jpg_dir = os.path.join(self.img_dir, "jpg")
                 os.makedirs(self.jpg_dir, exist_ok=True)

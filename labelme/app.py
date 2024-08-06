@@ -45,16 +45,15 @@ LABEL_COLORMAP = imgviz.label_colormap()
 
 
 class MainWindow(QtWidgets.QMainWindow):
-
     FIT_WINDOW, FIT_WIDTH, MANUAL_ZOOM = 0, 1, 2
 
     def __init__(
-        self,
-        config=None,
-        filename=None,
-        output=None,
-        output_file=None,
-        output_dir=None,
+            self,
+            config=None,
+            filename=None,
+            output=None,
+            output_file=None,
+            output_dir=None,
     ):
         if output is not None:
             logger.warning(
@@ -248,6 +247,14 @@ class MainWindow(QtWidgets.QMainWindow):
             shortcuts["open_prev"],
             "prev",
             self.tr("Open prev (hold Ctl+Shift to copy labels)"),
+            enabled=False,
+        )
+        sam_run_video = action(
+            self.tr("&SAM Run video"),
+            self.sam_run_video,
+            shortcuts["sam_run_video"],
+            "sam_run_video",
+            self.tr("Run sam video"),
             enabled=False,
         )
         save = action(
@@ -623,6 +630,7 @@ class MainWindow(QtWidgets.QMainWindow):
             zoomActions=zoomActions,
             openNextImg=openNextImg,
             openPrevImg=openPrevImg,
+            sam_run_video=sam_run_video,
             fileMenuActions=(open_, opendir, save, saveAs, close, quit),
             tool=(),
             # XXX: need to add some actions here to activate the shortcut
@@ -689,6 +697,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 open_,
                 openNextImg,
                 openPrevImg,
+                sam_run_video,
                 opendir,
                 self.menus.recentFiles,
                 save,
@@ -747,6 +756,7 @@ class MainWindow(QtWidgets.QMainWindow):
             opendir,
             openNextImg,
             openPrevImg,
+            sam_run_video,
             save,
             deleteFile,
             None,
@@ -1204,9 +1214,9 @@ class MainWindow(QtWidgets.QMainWindow):
             label_id += self._config["shift_auto_shape_color"]
             return LABEL_COLORMAP[label_id % len(LABEL_COLORMAP)]
         elif (
-            self._config["shape_color"] == "manual"
-            and self._config["label_colors"]
-            and label in self._config["label_colors"]
+                self._config["shape_color"] == "manual"
+                and self._config["label_colors"]
+                and label in self._config["label_colors"]
         ):
             return self._config["label_colors"][label]
         elif self._config["default_shape_color"]:
@@ -1217,7 +1227,6 @@ class MainWindow(QtWidgets.QMainWindow):
         for shape in shapes:
             item = self.labelList.findItemByShape(shape)
             self.labelList.removeItem(item)
-
 
     def loadShapes(self, shapes, replace=True):
         self._noSelectionSlot = True
@@ -1502,7 +1511,7 @@ class MainWindow(QtWidgets.QMainWindow):
         """Load the specified file, or the last opened file if None."""
         # changing fileListWidget loads file
         if filename in self.imageList and (
-            self.fileListWidget.currentRow() != self.imageList.index(filename)
+                self.fileListWidget.currentRow() != self.imageList.index(filename)
         ):
             self.fileListWidget.setCurrentRow(self.imageList.index(filename))
             self.fileListWidget.repaint()
@@ -1528,7 +1537,7 @@ class MainWindow(QtWidgets.QMainWindow):
             label_file_without_path = osp.basename(label_file)
             label_file = osp.join(self.output_dir, label_file_without_path)
         if QtCore.QFile.exists(label_file) and LabelFile.is_label_file(
-            label_file
+                label_file
         ):
             try:
                 self.labelFile = LabelFile(label_file)
@@ -1574,7 +1583,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.filename = filename
         if self._config["keep_prev"]:
             prev_shapes = self.canvas.shapes
-        self.canvas.loadPixmap(QtGui.QPixmap.fromImage(image))
+        self.canvas.loadPixmap(QtGui.QPixmap.fromImage(image), dir=self.lastOpenDir, file_name=filename)
         flags = {k: False for k in self._config["flags"] or []}
         if self.labelFile:
             self.loadLabels(self.labelFile.shapes)
@@ -1633,9 +1642,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def resizeEvent(self, event):
         if (
-            self.canvas
-            and not self.image.isNull()
-            and self.zoomMode != self.MANUAL_ZOOM
+                self.canvas
+                and not self.image.isNull()
+                and self.zoomMode != self.MANUAL_ZOOM
         ):
             self.adjustScale()
         super(MainWindow, self).resizeEvent(event)
@@ -1714,7 +1723,39 @@ class MainWindow(QtWidgets.QMainWindow):
     def openPrevImg(self, _value=False):
         keep_prev = self._config["keep_prev"]
         if QtWidgets.QApplication.keyboardModifiers() == (
-            Qt.ControlModifier | Qt.ShiftModifier
+                Qt.ControlModifier | Qt.ShiftModifier
+        ):
+            self._config["keep_prev"] = True
+
+        if not self.mayContinue():
+            return
+
+        if len(self.imageList) <= 0:
+            return
+
+        if self.canvas.sam_video_frame_idx is not None and self.canvas.sam_video_frame_idx == 0:
+            return
+
+        if self.filename is None:
+            return
+
+
+        currIndex = self.imageList.index(self.filename)
+        if currIndex - 1 >= 0:
+            filename = self.imageList[currIndex - 1]
+            if filename:
+                if filename != self.filename and self.canvas.sam_video_frame_idx is not None:
+                    self.canvas.sam_video_frame_idx -= 1
+                    print('prev img. new video frame idx', self.canvas.sam_video_frame_idx)
+                self.filename = filename
+                self.loadFile(filename)
+
+        self._config["keep_prev"] = keep_prev
+
+    def sam_run_video(self, _value=False):
+        keep_prev = self._config["keep_prev"]
+        if QtWidgets.QApplication.keyboardModifiers() == (
+                Qt.ControlModifier | Qt.ShiftModifier
         ):
             self._config["keep_prev"] = True
 
@@ -1727,18 +1768,18 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.filename is None:
             return
 
-        currIndex = self.imageList.index(self.filename)
-        if currIndex - 1 >= 0:
-            filename = self.imageList[currIndex - 1]
-            if filename:
-                self.loadFile(filename)
+        self.canvas.sam_propagate_video()
+        # if currIndex - 1 >= 0:
+        #     filename = self.imageList[currIndex - 1]
+        #     if filename:
+        #         self.loadFile(filename)
 
         self._config["keep_prev"] = keep_prev
 
     def openNextImg(self, _value=False, load=True):
         keep_prev = self._config["keep_prev"]
         if QtWidgets.QApplication.keyboardModifiers() == (
-            Qt.ControlModifier | Qt.ShiftModifier
+                Qt.ControlModifier | Qt.ShiftModifier
         ):
             self._config["keep_prev"] = True
 
@@ -1748,7 +1789,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if len(self.imageList) <= 0:
             return
 
-        filename = None
+        if self.canvas.sam_video_frame_idx is not None and self.canvas.sam_video_frame_idx == self.canvas.video_num_frames - 1:
+            return
+
+
         if self.filename is None:
             filename = self.imageList[0]
         else:
@@ -1757,7 +1801,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 filename = self.imageList[currIndex + 1]
             else:
                 filename = self.imageList[-1]
+
+        if filename != self.filename and self.canvas.sam_video_frame_idx is not None:
+            self.canvas.sam_video_frame_idx += 1
+            print('next img. new video frame idx', self.canvas.sam_video_frame_idx)
+
         self.filename = filename
+
+
 
         if self.filename and load:
             self.loadFile(self.filename)
@@ -1984,7 +2035,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "proceed anyway?"
         ).format(len(self.canvas.selectedShapes))
         if yes == QtWidgets.QMessageBox.warning(
-            self, self.tr("Attention"), msg, yes | no, yes
+                self, self.tr("Attention"), msg, yes | no, yes
         ):
             self.remLabels(self.canvas.deleteSelected())
             self.setDirty()
@@ -2043,7 +2094,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.filename = None
         for file in imageFiles:
             if file in self.imageList or not file.lower().endswith(
-                tuple(extensions)
+                    tuple(extensions)
             ):
                 continue
             label_file = osp.splitext(file)[0] + ".json"
@@ -2053,7 +2104,7 @@ class MainWindow(QtWidgets.QMainWindow):
             item = QtWidgets.QListWidgetItem(file)
             item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
             if QtCore.QFile.exists(label_file) and LabelFile.is_label_file(
-                label_file
+                    label_file
             ):
                 item.setCheckState(Qt.Checked)
             else:
@@ -2063,16 +2114,18 @@ class MainWindow(QtWidgets.QMainWindow):
         if len(self.imageList) > 1:
             self.actions.openNextImg.setEnabled(True)
             self.actions.openPrevImg.setEnabled(True)
+            self.actions.sam_run_video.setEnabled(True)
 
         self.openNextImg()
 
     def importDirImages(self, dirpath, pattern=None, load=True):
         self.actions.openNextImg.setEnabled(True)
         self.actions.openPrevImg.setEnabled(True)
+        self.actions.sam_run_video.setEnabled(True)
 
         if not self.mayContinue() or not dirpath:
             return
-
+        self.canvas.reset_video_state()
         self.lastOpenDir = dirpath
         self.filename = None
         self.fileListWidget.clear()
@@ -2086,7 +2139,7 @@ class MainWindow(QtWidgets.QMainWindow):
             item = QtWidgets.QListWidgetItem(filename)
             item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
             if QtCore.QFile.exists(label_file) and LabelFile.is_label_file(
-                label_file
+                    label_file
             ):
                 item.setCheckState(Qt.Checked)
             else:
@@ -2109,7 +2162,7 @@ class MainWindow(QtWidgets.QMainWindow):
         images = natsort.os_sorted(images)
         return images
 
-    def segmentAnything(self,):
+    def segmentAnything(self, ):
         try:
             self.toggleDrawMode(False, createMode="polygonSAM")
             self.canvas.loadSamPredictor()

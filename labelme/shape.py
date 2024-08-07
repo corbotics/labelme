@@ -560,3 +560,7 @@ class MaskShape(object):
 
     def copy(self):
         return copy.deepcopy(self)
+
+    def setOpen(self):
+        print("skip setopen")
+        pass

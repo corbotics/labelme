@@ -838,6 +838,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # if self.firstStart:
         #    QWhatsThis.enterWhatsThisMode()
 
+        self.canvas.loadSamPredictor()
+
     def menu(self, title, actions=None):
         menu = self.menuBar().addMenu(title)
         if actions:
@@ -2162,9 +2164,10 @@ class MainWindow(QtWidgets.QMainWindow):
         images = natsort.os_sorted(images)
         return images
 
-    def segmentAnything(self, ):
+    def segmentAnything(self):
         try:
             self.toggleDrawMode(False, createMode="polygonSAM")
-            self.canvas.loadSamPredictor()
+            self.canvas.update_sam()
+            # self.canvas.loadSamPredictor()
         except ImportError as e:
             print(e)

@@ -32,10 +32,13 @@ Your config: `~/.labelmerc`
 Useful keys:
 -  W: start SAM editing
 -  S: compute SAM video
--  C: continue frame
-- Enter: save current mask to label
+
+[//]: # (-  C: continue frame)
+-  Q: temporarily hide sam mask
+
 - D: open_next
 - A: open_prev
+- Enter: save current mask to label
 
 ## Todo
 - able to skip a frame completely by sam.

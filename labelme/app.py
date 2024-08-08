@@ -257,6 +257,14 @@ class MainWindow(QtWidgets.QMainWindow):
             self.tr("Run sam video"),
             enabled=False,
         )
+        sam_hide = action(
+            self.tr("&hide_sam"),
+            self.hide_sam,
+            shortcuts["hide_sam"],
+            "hide_sam",
+            self.tr("hide_sam"),
+            enabled=True,
+        )
         save = action(
             self.tr("&Save"),
             self.saveFile,
@@ -632,6 +640,7 @@ class MainWindow(QtWidgets.QMainWindow):
             openNextImg=openNextImg,
             openPrevImg=openPrevImg,
             sam_run_video=sam_run_video,
+            sam_hide=sam_hide,
             fileMenuActions=(open_, opendir, save, saveAs, close, quit),
             tool=(),
             # XXX: need to add some actions here to activate the shortcut
@@ -699,6 +708,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 openNextImg,
                 openPrevImg,
                 sam_run_video,
+                sam_hide,
                 opendir,
                 self.menus.recentFiles,
                 save,
@@ -2169,6 +2179,8 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             self.toggleDrawMode(False, createMode="polygonSAM")
             self.canvas.update_sam()
-            # self.canvas.loadSamPredictor()
         except ImportError as e:
             print(e)
+
+    def hide_sam(self):
+        self.canvas.hide_sam()

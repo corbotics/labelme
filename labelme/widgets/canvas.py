@@ -9,6 +9,7 @@ from matplotlib import pyplot as plt
 from qtpy import QtCore
 from qtpy import QtGui
 from qtpy import QtWidgets
+import copy
 
 import labelme.utils
 from labelme import QT5
@@ -161,6 +162,7 @@ class Canvas(QtWidgets.QWidget):
         self.setFocusPolicy(QtCore.Qt.WheelFocus)
         self.sam_predictor: SAM2VideoPredictor | SAM2ImagePredictor = None
         self.sam_mask = MaskShape()
+        self.hided_sam_mask = None # to hide mask temporarily
         self.sam_video_frame_idx = None
         self.sam_video_init = False
         self.points = defaultdict(list)
@@ -226,6 +228,20 @@ class Canvas(QtWidgets.QWidget):
         self.sam_video_frame_idx = None
         self.sam_propagated_video = False
         self.video_masks = None
+
+
+    def hide_sam(self):
+        if self.sam_mask is not None and self.hided_sam_mask is None:
+            self.hided_sam_mask = self.sam_mask.copy()
+            self.sam_mask = MaskShape()
+            self.sam_mask.paint(self._painter)
+            self.repaint()
+    def unhide_sam(self):
+        if self.sam_mask is not None:
+            self.sam_mask = self.hided_sam_mask
+            self.sam_mask.paint(self._painter)
+            self.repaint()
+            self.hided_sam_mask = None
 
     def update_sam(self):
         print('samembedding')
@@ -1143,6 +1159,10 @@ class Canvas(QtWidgets.QWidget):
                     self.shapeMoved.emit()
 
                 self.movingShape = False
+        # isAutoRepeat=True only when actual releasing. Not when holding down.
+        if self.hided_sam_mask is not None and not ev.isAutoRepeat():
+            self.unhide_sam()
+
 
     def setLastLabel(self, text, flags):
         assert text

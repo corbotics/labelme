@@ -263,6 +263,7 @@ class Canvas(QtWidgets.QWidget):
                 while images_found < self.video_num_frames:
                     filename = img_folder_files[start_i + i]
                     i += 1
+
                     if filename.endswith(".png") or filename.endswith(".jpg"):
                         # Open the PNG image
                         png_image = Image.open(os.path.join(self.img_dir, filename))
@@ -272,7 +273,7 @@ class Canvas(QtWidgets.QWidget):
 
                         # Define the new filename with .jpg extension
                         # new_filename = os.path.splitext(filename)[0].replace('frame_', '') + ".jpg"
-                        new_filename = f"{i:05d}.jpg"
+                        new_filename = f"{images_found:05d}.jpg"
                         # Save the image in JPG format
                         rgb_image.save(os.path.join(self.jpg_dir, new_filename), "JPEG") # save
                         images_found += 1
@@ -1091,9 +1092,11 @@ class Canvas(QtWidgets.QWidget):
             self.movingShape = True
 
     def keyPressEvent(self, ev):
-        print('keyPressEvent canvas self.drawing()', self.drawing())
-        modifiers = ev.modifiers()
         key = ev.key()
+        key_name = QtGui.QKeySequence(key).toString()
+
+        print(f'keyPressEvent {key_name } canvas self.drawing()', self.drawing())
+        modifiers = ev.modifiers()
         if self.drawing():
             if key == QtCore.Qt.Key_Escape and self.current_prompts:
                 self.current_prompts = None
@@ -1104,15 +1107,17 @@ class Canvas(QtWidgets.QWidget):
                 self.finalise()
             elif modifiers == QtCore.Qt.AltModifier:
                 self.snapping = False
-        elif self.editing():
-            if key == QtCore.Qt.Key_Up:
-                self.moveByKeyboard(QtCore.QPointF(0.0, -MOVE_SPEED))
-            elif key == QtCore.Qt.Key_Down:
-                self.moveByKeyboard(QtCore.QPointF(0.0, MOVE_SPEED))
-            elif key == QtCore.Qt.Key_Left:
-                self.moveByKeyboard(QtCore.QPointF(-MOVE_SPEED, 0.0))
-            elif key == QtCore.Qt.Key_Right:
-                self.moveByKeyboard(QtCore.QPointF(MOVE_SPEED, 0.0))
+        # elif self.editing():
+        # if key == QtCore.Qt.Key_Up:
+            # self.moveByKeyboard(QtCore.QPointF(0.0, -MOVE_SPEED))
+        # elif key == QtCore.Qt.Key_Down:
+        #     self.moveByKeyboard(QtCore.QPointF(0.0, MOVE_SPEED))
+        # elif key == QtCore.Qt.Key_Left:
+        #     self.open()
+        #     self.moveByKeyboard(QtCore.QPointF(-MOVE_SPEED, 0.0))
+        # elif key == QtCore.Qt.Key_Right:
+        #     self.openNextImg()
+            # self.moveByKeyboard(QtCore.QPointF(MOVE_SPEED, 0.0))
 
     def keyReleaseEvent(self, ev):
         modifiers = ev.modifiers()

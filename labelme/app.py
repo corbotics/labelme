@@ -378,6 +378,7 @@ class MainWindow(QtWidgets.QMainWindow):
         createPolygonSAMMode = action(
             self.tr("Create Polygons With Segment Anything"),
             self.segmentAnything,
+            shortcuts["create_sam_polygon"],
             icon="objects",
             tip=self.tr("Start creating polygons with segment anything"),
             enabled=False,

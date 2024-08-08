@@ -26,7 +26,8 @@ After it downloaded, you can start annotating. Only points prompt is supported, 
 
 Since we are editing in video mode, you should start at the frame that has some segmented object visible. All frames before that are not used.
 ### Config
-Change defaults in: `labelme/config/default_config.yaml`
+Default init config: `labelme/config/default_config.yaml`
+Your config: `~/.labelmerc`
 
 Useful keys:
 -  W: start SAM editing

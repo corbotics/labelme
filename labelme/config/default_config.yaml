@@ -1,4 +1,3 @@
-auto_save: true
 display_label_popup: true
 store_data: false # image data in json is not needed
 keep_prev: false
@@ -6,6 +5,7 @@ keep_prev_scale: true
 keep_prev_brightness: false
 keep_prev_contrast: false
 logger_level: info
+auto_save: true
 
 flags: null
 label_flags: null

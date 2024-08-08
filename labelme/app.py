@@ -1792,7 +1792,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if len(self.imageList) <= 0:
             return
 
-        if self.canvas.sam_video_frame_idx is not None and self.canvas.sam_video_frame_idx == self.canvas.video_num_frames - 1:
+        if self.canvas.sam_video_frame_idx is not None and self.canvas.sam_video_frame_idx == self.canvas.max_video_num_frames - 1:
             return
 
 

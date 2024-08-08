@@ -244,13 +244,19 @@ class Canvas(QtWidgets.QWidget):
             self.sam_predictor.set_image(image)
         else:
             if not self.sam_video_init:
-                self.video_num_frames = 50
-
+                self.max_video_num_frames = 32
                 self.jpg_dir = os.path.join(self.img_dir, "jpg")
                 os.makedirs(self.jpg_dir, exist_ok=True)
 
                 start_i = None
                 img_folder_files = sorted(os.listdir(self.img_dir))
+                count_imgs = 0
+                for i, filename in enumerate(img_folder_files):
+                    if filename.lower().endswith(".png") or filename.lower().endswith(".jpg"):
+                        count_imgs += 1
+                self.num_tracking_video_frames = min(count_imgs, self.max_video_num_frames)
+
+                # find current file
                 for i, filename in enumerate(img_folder_files):
                     if not self.current_image_path.endswith(filename):
                         continue
@@ -260,7 +266,7 @@ class Canvas(QtWidgets.QWidget):
                 self.sam_video_frame_idx = 0
                 images_found = 0
                 i = 0
-                while images_found < self.video_num_frames:
+                while images_found < self.num_tracking_video_frames:
                     filename = img_folder_files[start_i + i]
                     i += 1
 
@@ -316,7 +322,7 @@ class Canvas(QtWidgets.QWidget):
                     labels=labels,
                     # clear_old_points=False,
                 )
-
+                print('out_mask_logits[0]', out_mask_logits[0].max(), out_mask_logits[0].mean(), out_mask_logits[0].median())
                 masks = (out_mask_logits[0] > 0.0).cpu().numpy()
                 # print('video mask', mask.shape)
                 print('len self.video_masks', len(masks))
@@ -329,7 +335,7 @@ class Canvas(QtWidgets.QWidget):
 
         video_segments = {}  # video_segments contains the per-frame segmentation results
         for out_frame_idx, out_obj_ids, out_mask_logits in self.sam_predictor.propagate_in_video(
-                self.video_inference_state, max_frame_num_to_track=self.video_num_frames):
+                self.video_inference_state, max_frame_num_to_track=self.num_tracking_video_frames):
             video_segments[out_frame_idx] = {
                 out_obj_id: (out_mask_logits[i] > 0.0).cpu().numpy()
                 for i, out_obj_id in enumerate(out_obj_ids)
@@ -337,7 +343,7 @@ class Canvas(QtWidgets.QWidget):
         vis_frame_stride = 1
         plt.close("all")
         out_obj_id = 1
-        self.video_masks = [video_segments[i][out_obj_id] for i in range(self.video_num_frames)]
+        self.video_masks = [video_segments[i][out_obj_id] for i in range(self.num_tracking_video_frames)]
         mask = self.video_masks[self.sam_video_frame_idx]
         self.sam_mask.setScaleMask(self.sam_image_scale, mask.squeeze(0))
         self.sam_propagated_video = True

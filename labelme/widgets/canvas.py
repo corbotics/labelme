@@ -1094,8 +1094,10 @@ class Canvas(QtWidgets.QWidget):
     def keyPressEvent(self, ev):
         key = ev.key()
         key_name = QtGui.QKeySequence(key).toString()
-
-        print(f'keyPressEvent {key_name } canvas self.drawing()', self.drawing())
+        try:
+            print(f'keyPressEvent {key_name } canvas self.drawing()', self.drawing())
+        except:
+            pass
         modifiers = ev.modifiers()
         if self.drawing():
             if key == QtCore.Qt.Key_Escape and self.current_prompts:
